@@ -1,0 +1,84 @@
+# ---- Python bytecode and cache ----
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ---- Virtual environments ----
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# ---- Package/build artifacts ----
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+pip-wheel-metadata/
+
+# ---- Testing & coverage ----
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# ---- Type checkers & linters ----
+.mypy_cache/
+.dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# ---- IDEs & editors ----
+.idea/
+.vscode/
+*.swp
+*.swo
+*.orig
+
+# ---- Logs & local data ----
+logs/
+*.log
+
+# ---- OS files ----
+.DS_Store
+Thumbs.db
+
+# ---- Environment & local settings ----
+.env
+.env.*
+!.env.example
+*.local
+
+# ---- Databases (local dev) ----
+*.sqlite3
+*.db
+*.db-journal
+
+# ---- Docker (local overrides) ----
+docker-compose.override.yml
+
+# ---- Cache & misc ----
+.cache/
+__pypackages__/
+.pdm-*
+
+# ---- Framework specific (FastAPI/Starlette has none by default) ----
+# Add framework-specific ignores below if introduced later
