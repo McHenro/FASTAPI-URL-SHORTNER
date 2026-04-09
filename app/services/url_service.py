@@ -9,6 +9,7 @@ import string
 from typing import Optional
 from sqlalchemy.orm import Session
 from app.models.url import URL
+from typing import List
 
 
 def generate_short_code(length: int = 6) -> str:
@@ -66,19 +67,15 @@ def get_long_url_service(db: Session, short_code: str) -> Optional[URL]:
     """
     # SCALABILITY — Redis Caching: check cache before hitting the DB
     # TODO: cached_url = redis_client.get(short_code)
-    # TODO: if cached_url:
-    # TODO:     return cached_url  # Fast path — skips DB entirely
 
     url = db.query(URL).filter(URL.short_code == short_code).first()
 
     # TODO: Store in Redis so the next request skips the DB
-    # TODO: if url:
-    # TODO:     redis_client.setex(short_code, 3600, url.long_url)  # TTL: 1 hour
 
     return url
 
 
-def get_all_urls_service(db: Session) -> list[URL]:
+def get_all_urls_service(db: Session) -> List[URL]:
     """Retrieve all stored URL mappings.
 
     Useful for admin inspection, extracting short codes, or auditing long URLs.
