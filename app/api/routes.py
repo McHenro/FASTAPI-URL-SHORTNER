@@ -17,11 +17,12 @@ from app.services.url_service import (
     get_long_url_service,
 )
 from fastapi.responses import RedirectResponse
+from app.services.url_service import redis_client
 
 router = APIRouter()
 
 
-@router.post("/shorten", response_model=URLResponse)
+@router.post("/links", response_model=URLResponse)
 def create_short_url(p: URLCreate, db: Session = Depends(get_db)) -> URLResponse:
     """Create a short URL code for a provided long URL.
 
@@ -36,9 +37,8 @@ def create_short_url(p: URLCreate, db: Session = Depends(get_db)) -> URLResponse
     return url
 
 
-# NEW ENDPOINT — must be defined BEFORE /{short_code} so FastAPI matches /urls
-# exactly rather than treating "urls" as a short code.
-@router.get("/urls", response_model=List[URLResponse])
+# NEW ENDPOINT 
+@router.get("/links", response_model=List[URLResponse])
 def list_all_urls(db: Session = Depends(get_db)) -> List[URLResponse]:
     """Return every stored URL mapping.
 
@@ -57,7 +57,7 @@ def list_all_urls(db: Session = Depends(get_db)) -> List[URLResponse]:
 # The DB calls below are still synchronous (SQLAlchemy sync). When you switch to
 # an async ORM (asyncpg / SQLAlchemy async), replace the db.query(...) calls with:
 #   url = await db.execute(select(URL).where(URL.short_code == short_code))
-@router.get("/{short_code}")
+@router.get("/links/{short_code}")
 async def redirect_to_long_url(short_code: str, db: Session = Depends(get_db)):
     """Redirect to the original long URL for the given short code.
 
@@ -72,13 +72,16 @@ async def redirect_to_long_url(short_code: str, db: Session = Depends(get_db)):
         RedirectResponse: A 307 redirect to the original `long_url`.
     """
     # SCALABILITY — Redis Caching: hit the cache before the DB
-    # TODO: cached_url = redis_client.get(short_code)
+    cached_url = redis_client.get(short_code)
+    if cached_url:
+        return RedirectResponse(url=cached_url)
 
     url = get_long_url_service(db, short_code)
     if not url:
         raise HTTPException(status_code=404, detail="URL not found")
 
-    # TODO: Replace SQLAlchemy sync with async ORM (e.g. asyncpg) when ready:
+    # TODO (future): Replace SQLAlchemy sync with async ORM (e.g. asyncpg):
+    #   url = await db.execute(select(URL).where(URL.short_code == short_code))
 
     return RedirectResponse(url=url.long_url)
 
