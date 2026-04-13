@@ -10,7 +10,11 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from app.models.url import URL
 from typing import List
+import redis
 
+
+# Setup client (Use decode_response=True to get strings back)
+redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
 
 def generate_short_code(length: int = 6) -> str:
     """Generate a pseudo-random alphanumeric short code.
@@ -41,9 +45,9 @@ def create_short_url_service(db: Session, long_url: str) -> URL:
     while True:
         short_code = generate_short_code()
         # TODO: Check Redis cache here too before hitting DB
-        # cached = redis_client.get(short_code)
-        # if cached:
-        #     continue  # Code is in use — try again
+        cached = redis_client.get(short_code)
+        if cached:
+            continue  # Code is in use — try again
         exists = db.query(URL).filter(URL.short_code == short_code).first()
         if not exists:
             break
@@ -66,11 +70,15 @@ def get_long_url_service(db: Session, short_code: str) -> Optional[URL]:
         The `URL` instance if found, otherwise `None`.
     """
     # SCALABILITY — Redis Caching: check cache before hitting the DB
-    # TODO: cached_url = redis_client.get(short_code)
+    cached_url = redis_client.get(short_code)
+    if cached_url:
+        return cached_url  # Fast path - skips DB entirely
 
     url = db.query(URL).filter(URL.short_code == short_code).first()
 
-    # TODO: Store in Redis so the next request skips the DB
+    # Store in Redis so the next request skips the DB
+    if url:
+        redis_client.setex(short_code, 3600, url.long_url)  # TTL: 1hour
 
     return url
 
