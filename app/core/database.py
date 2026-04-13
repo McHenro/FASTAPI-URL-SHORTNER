@@ -1,55 +1,45 @@
 """Database setup and session management for the URL shortener app.
 
-This module configures the SQLAlchemy engine, session factory, and provides the
-`get_db` dependency used in FastAPI routes to inject a scoped database session.
+Fully async: uses SQLAlchemy's asyncio extension with the asyncpg driver.
 
 Environment:
-    - Expects `DATABASE_URL` to be defined in the environment (read from `.env`).
-
-Notes:
-    - The engine and session here are synchronous. If you plan to migrate to
-      async endpoints, use `sqlalchemy.ext.asyncio` and an async session pattern.
+    - DATABASE_URL must use the asyncpg scheme:
+      postgresql+asyncpg://user:password@host/dbname
 """
 
 import os
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy.ext.asyncio import create_async_engine  # Imported for potential async migration
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import declarative_base
 from dotenv import load_dotenv
 
-# Load environment variables from a `.env` file if present.
 load_dotenv()
 
-# Connection string for the database, e.g., "postgresql://user:password@localhost/dbname"
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Create a synchronous SQLAlchemy engine bound to the connection string.
-engine = create_engine(DATABASE_URL)
+# Async engine — delegates actual I/O to asyncpg under the hood
+engine = create_async_engine(DATABASE_URL, echo=False)
 
-# Configure a session factory. `autocommit` and `autoflush` are disabled for explicit control.
-SessionLocal = sessionmaker(
+# Async session factory.
+# expire_on_commit=False keeps attribute access working after commit
+# without needing an extra await db.refresh().
+AsyncSessionLocal = async_sessionmaker(
+    bind=engine,
     autocommit=False,
     autoflush=False,
-    bind=engine,
+    expire_on_commit=False,
 )
 
-# Base class for SQLAlchemy models to inherit from.
+# Base class all ORM models inherit from
 Base = declarative_base()
 
 
-def get_db():
-    """Yield a database session and ensure it is closed after use.
+async def get_db():
+    """Yield an async database session and guarantee it is closed after use.
 
-    This is designed to be used as a FastAPI dependency, which provides a DB
-    session to path operation functions and guarantees cleanup.
+    FastAPI awaits the generator automatically when used as a Depends().
 
     Yields:
-        Session: A SQLAlchemy session bound to the configured engine.
+        AsyncSession: An async-capable SQLAlchemy session.
     """
-    db = SessionLocal()
-    try:
+    async with AsyncSessionLocal() as db:
         yield db
-    finally:
-        db.close()
-
-

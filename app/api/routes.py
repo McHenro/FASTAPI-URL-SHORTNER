@@ -1,87 +1,83 @@
 """FastAPI API routes for the URL shortener service.
 
-Exposes three endpoints:
-- POST /shorten: Accepts a long URL and returns a generated short code with the original URL.
-- GET /urls: Returns all stored URL mappings (short codes + long URLs).
-- GET /{short_code}: Redirects the client to the original long URL if the short code exists.
+All handlers are async. DB sessions are AsyncSession (asyncpg-backed).
+Redis is checked first on the redirect hot path before hitting the DB.
+
+Endpoints:
+- POST /links               create a short link
+- GET  /links               list all stored links
+- GET  /links/{short_code}  redirect to original URL (307)
 """
 
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.schemas.url_schema import URLCreate, URLResponse
 from app.services.url_service import (
     create_short_url_service,
     get_all_urls_service,
     get_long_url_service,
+    redis_client,
 )
 from fastapi.responses import RedirectResponse
-from app.services.url_service import redis_client
 
 router = APIRouter()
 
 
 @router.post("/links", response_model=URLResponse)
-def create_short_url(p: URLCreate, db: Session = Depends(get_db)) -> URLResponse:
+async def create_short_url(p: URLCreate, db: AsyncSession = Depends(get_db)) -> URLResponse:
     """Create a short URL code for a provided long URL.
 
     Args:
-        p: Pydantic model containing the `long_url` to shorten.
-        db: SQLAlchemy DB session dependency.
+        p: Pydantic model containing the long_url to shorten.
+        db: Async SQLAlchemy DB session dependency.
 
     Returns:
-        URLResponse: The persisted URL record containing the `short_code` and `long_url`.
+        URLResponse: The persisted URL record containing short_code and long_url.
     """
-    url = create_short_url_service(db, p.long_url)
+    url = await create_short_url_service(db, p.long_url)
     return url
 
 
-# NEW ENDPOINT 
 @router.get("/links", response_model=List[URLResponse])
-def list_all_urls(db: Session = Depends(get_db)) -> List[URLResponse]:
+async def list_all_urls(db: AsyncSession = Depends(get_db)) -> List[URLResponse]:
     """Return every stored URL mapping.
 
-    Useful for inspecting all short codes and their corresponding long URLs.
-
     Args:
-        db: SQLAlchemy DB session dependency.
+        db: Async SQLAlchemy DB session dependency.
 
     Returns:
-        A list of all URL records, each containing `short_code` and `long_url`.
+        A list of all URL records, each containing short_code and long_url.
     """
-    return get_all_urls_service(db)
+    return await get_all_urls_service(db)
 
 
-# SCALABILITY — Async: converted to async def so the event loop is not blocked.
-# The DB calls below are still synchronous (SQLAlchemy sync). When you switch to
-# an async ORM (asyncpg / SQLAlchemy async), replace the db.query(...) calls with:
-#   url = await db.execute(select(URL).where(URL.short_code == short_code))
 @router.get("/links/{short_code}")
-async def redirect_to_long_url(short_code: str, db: Session = Depends(get_db)):
+async def redirect_to_long_url(short_code: str, db: AsyncSession = Depends(get_db)):
     """Redirect to the original long URL for the given short code.
+
+    Checks Redis first (fast path). Falls back to DB on a cache miss,
+    then writes the result to Redis for subsequent requests.
 
     Args:
         short_code: The short code to resolve.
-        db: SQLAlchemy DB session dependency.
+        db: Async SQLAlchemy DB session dependency.
 
     Raises:
         HTTPException: 404 if the short code does not exist.
 
     Returns:
-        RedirectResponse: A 307 redirect to the original `long_url`.
+        RedirectResponse: A 307 redirect to the original long_url.
     """
-    # SCALABILITY — Redis Caching: hit the cache before the DB
+    # Fast path: Redis hit skips the DB entirely
     cached_url = redis_client.get(short_code)
     if cached_url:
         return RedirectResponse(url=cached_url)
 
-    url = get_long_url_service(db, short_code)
+    # Cache miss: query DB (service also writes result back to Redis)
+    url = await get_long_url_service(db, short_code)
     if not url:
         raise HTTPException(status_code=404, detail="URL not found")
 
-    # TODO (future): Replace SQLAlchemy sync with async ORM (e.g. asyncpg):
-    #   url = await db.execute(select(URL).where(URL.short_code == short_code))
-
     return RedirectResponse(url=url.long_url)
-
