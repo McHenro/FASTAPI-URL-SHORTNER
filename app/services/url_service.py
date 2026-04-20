@@ -109,3 +109,17 @@ async def get_all_urls_service(db: AsyncSession) -> List[URL]:
     """
     result = await db.execute(select(URL))
     return result.scalars().all()
+
+
+async def delete_url_service(db: AsyncSession, short_code: str) -> bool:
+    result =  await db.execute(select(URL).where(URL.short_code == short_code))
+    
+    url = result.scalar_one_or_none()
+
+    if not url:
+        return False
+    
+    await db.delete(url)
+    await db.commit()
+
+    return True
