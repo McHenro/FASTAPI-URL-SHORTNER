@@ -10,10 +10,7 @@ from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.url import URL
-import redis
-
-# Redis client — redis-py is synchronous, which is fine for lightweight cache calls
-redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+from app.core.cache_utilities import set_cache, delete_cache, url_cache_key
 
 
 def generate_short_code(length: int = 6) -> str:
@@ -74,9 +71,31 @@ async def get_long_url_service(db: AsyncSession, short_code: str) -> Optional[UR
 
     # Write-through: populate Redis so the next redirect skips the DB entirely
     if url:
-        redis_client.setex(short_code, 3600, url.long_url)  # TTL: 1 hour
+        await set_cache(url_cache_key(short_code), url.long_url, ttl=3600)
 
     return url
+
+
+async def delete_url_service(db: AsyncSession, short_code: str) -> bool:
+    """Delete a URL mapping by its short code and evict it from cache.
+
+    Args:
+        db: Active async SQLAlchemy session.
+        short_code: The short code of the URL to delete.
+
+    Returns:
+        True if the record was found and deleted, False if it did not exist.
+    """
+    result = await db.execute(select(URL).where(URL.short_code == short_code))
+    url = result.scalar_one_or_none()
+
+    if not url:
+        return False
+
+    await db.delete(url)
+    await db.commit()
+    await delete_cache(url_cache_key(short_code))
+    return True
 
 
 async def get_all_urls_service(db: AsyncSession) -> List[URL]:

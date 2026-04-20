@@ -4,9 +4,10 @@ All handlers are async. DB sessions are AsyncSession (asyncpg-backed).
 Redis is checked first on the redirect hot path before hitting the DB.
 
 Endpoints:
-- POST /links               create a short link
-- GET  /links               list all stored links
-- GET  /links/{short_code}  redirect to original URL (307)
+- POST   /v1/links               create a short link
+- GET    /v1/links               list all stored links
+- GET    /v1/links/{short_code}  redirect to original URL (307)
+- DELETE /v1/links/{short_code}  delete a short link
 """
 
 from typing import List
@@ -21,12 +22,13 @@ from app.services.url_service import (
     delete_url_service,
     redis_client,
 )
+from app.core.cache_utilities import get_cache, url_cache_key
 from fastapi.responses import RedirectResponse
 
-router = APIRouter()
+v1_router = APIRouter(prefix="/v1", tags=["v1"])
 
 
-@router.post("/links", response_model=URLResponse)
+@v1_router.post("/links", response_model=URLResponse)
 async def create_short_url(p: URLCreate, db: AsyncSession = Depends(get_db)) -> URLResponse:
     """Create a short URL code for a provided long URL.
 
@@ -41,7 +43,7 @@ async def create_short_url(p: URLCreate, db: AsyncSession = Depends(get_db)) -> 
     return url
 
 
-@router.get("/links", response_model=List[URLResponse])
+@v1_router.get("/links", response_model=List[URLResponse])
 async def list_all_urls(db: AsyncSession = Depends(get_db)) -> List[URLResponse]:
     """Return every stored URL mapping.
 
@@ -54,7 +56,7 @@ async def list_all_urls(db: AsyncSession = Depends(get_db)) -> List[URLResponse]
     return await get_all_urls_service(db)
 
 
-@router.get("/links/{short_code}")
+@v1_router.get("/links/{short_code}")
 async def redirect_to_long_url(short_code: str, db: AsyncSession = Depends(get_db)):
     """Redirect to the original long URL for the given short code.
 
@@ -72,7 +74,7 @@ async def redirect_to_long_url(short_code: str, db: AsyncSession = Depends(get_d
         RedirectResponse: A 307 redirect to the original long_url.
     """
     # Fast path: Redis hit skips the DB entirely
-    cached_url = redis_client.get(short_code)
+    cached_url = await get_cache(url_cache_key(short_code))
     if cached_url:
         return RedirectResponse(url=cached_url)
 
@@ -88,3 +90,19 @@ async def redirect_to_long_url(short_code: str, db: AsyncSession = Depends(get_d
 async def delete_a_url(short_code: str, db: AsyncSession = Depends(get_db)):
    
     return await delete_url_service(db, short_code)
+@v1_router.delete("/links/{short_code}", status_code=204)
+async def delete_short_url(short_code: str, db: AsyncSession = Depends(get_db)):
+    """Delete the URL mapping for the given short code.
+
+    Also evicts the entry from Redis cache.
+
+    Args:
+        short_code: The short code to delete.
+        db: Async SQLAlchemy DB session dependency.
+
+    Raises:
+        HTTPException: 404 if the short code does not exist.
+    """
+    deleted = await delete_url_service(db, short_code)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="URL not found")
