@@ -18,6 +18,7 @@ from app.services.url_service import (
     create_short_url_service,
     get_all_urls_service,
     get_long_url_service,
+    delete_url_service,
     redis_client,
 )
 from fastapi.responses import RedirectResponse
@@ -81,3 +82,9 @@ async def redirect_to_long_url(short_code: str, db: AsyncSession = Depends(get_d
         raise HTTPException(status_code=404, detail="URL not found")
 
     return RedirectResponse(url=url.long_url)
+
+
+@router.delete("/links/{short_code}")
+async def delete_a_url(short_code: str, db: AsyncSession = Depends(get_db)):
+   
+    return await delete_url_service(db, short_code)
