@@ -27,7 +27,7 @@ def generate_short_code(length: int = 6) -> str:
     return "".join(random.choices(string.ascii_letters + string.digits, k=length))
 
 
-async def create_short_url_service(db: AsyncSession, long_url: str) -> URL:
+async def create_short_url_service(db: AsyncSession, long_url: str, title: Optional[str] = None) -> URL:
     """Create and persist a new URL mapping with a collision-safe short code.
 
     Keeps generating codes until one that does not already exist in the DB is found.
@@ -46,7 +46,7 @@ async def create_short_url_service(db: AsyncSession, long_url: str) -> URL:
         if not result.scalar_one_or_none():
             break
 
-    new_url = URL(long_url=long_url, short_code=short_code)
+    new_url = URL(long_url=long_url, short_code=short_code, title=title)
     db.add(new_url)
     await db.commit()
     await db.refresh(new_url)

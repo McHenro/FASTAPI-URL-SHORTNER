@@ -20,7 +20,6 @@ from app.services.url_service import (
     get_all_urls_service,
     get_long_url_service,
     delete_url_service,
-    redis_client,
 )
 from app.core.cache_utilities import get_cache, url_cache_key
 from fastapi.responses import RedirectResponse
@@ -39,7 +38,7 @@ async def create_short_url(p: URLCreate, db: AsyncSession = Depends(get_db)) -> 
     Returns:
         URLResponse: The persisted URL record containing short_code and long_url.
     """
-    url = await create_short_url_service(db, p.long_url)
+    url = await create_short_url_service(db, p.long_url, p.title)
     return url
 
 
@@ -86,10 +85,6 @@ async def redirect_to_long_url(short_code: str, db: AsyncSession = Depends(get_d
     return RedirectResponse(url=url.long_url)
 
 
-@router.delete("/links/{short_code}")
-async def delete_a_url(short_code: str, db: AsyncSession = Depends(get_db)):
-   
-    return await delete_url_service(db, short_code)
 @v1_router.delete("/links/{short_code}", status_code=204)
 async def delete_short_url(short_code: str, db: AsyncSession = Depends(get_db)):
     """Delete the URL mapping for the given short code.
