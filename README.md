@@ -1,6 +1,6 @@
 # URL Shortener
 
-A production-style URL shortener built with **FastAPI**, **PostgreSQL** (via asyncpg + SQLAlchemy async ORM), and **Redis** as a write-through cache. Migrations are managed with **Alembic**.
+A production-style URL shortener built with **FastAPI**, **PostgreSQL** (via asyncpg + SQLAlchemy async ORM), and **Redis** as a write-through cache. Migrations are managed with **Alembic**. Outbound webhooks deliver real-time event notifications when URLs are created, clicked, or deleted.
 
 ---
 
@@ -9,17 +9,21 @@ A production-style URL shortener built with **FastAPI**, **PostgreSQL** (via asy
 ```
 app/
 ├── api/
-│   └── routes.py          # All v1 HTTP endpoints
+│   ├── routes.py          # All v1 URL endpoints
+│   └── webhook_routes.py  # Webhook registration + management endpoints
 ├── core/
 │   ├── config.py          # Pydantic settings — reads from .env
 │   ├── database.py        # Async SQLAlchemy engine + session factory
 │   └── cache_utilities.py # Async Redis helpers + url_cache_key
 ├── models/
-│   └── url.py             # URL ORM model
+│   ├── url.py             # URL ORM model
+│   └── webhook.py         # Webhook ORM model
 ├── schemas/
-│   └── url_schema.py      # Pydantic request/response schemas
+│   ├── url_schema.py      # Pydantic request/response schemas for URLs
+│   └── webhook_schema.py  # Pydantic schemas + WebhookEvent enum
 ├── services/
-│   └── url_service.py     # Business logic (create, resolve, delete)
+│   ├── url_service.py     # Business logic (create, resolve, delete)
+│   └── webhook_service.py # Webhook CRUD + fire_event (fire-and-forget delivery)
 └── main.py                # FastAPI app + lifespan (DB init, Redis init)
 alembic/
 ├── env.py                 # Async-aware migration environment
@@ -70,7 +74,9 @@ uvicorn app.main:app --reload
 
 ## API Endpoints
 
-All routes are prefixed with `/v1`.
+### URL Endpoints
+
+All URL routes are prefixed with `/v1`.
 
 | Method   | Path                    | Description                              |
 |----------|-------------------------|------------------------------------------|
@@ -79,27 +85,87 @@ All routes are prefixed with `/v1`.
 | `GET`    | `/v1/links/{short_code}`| Redirect (307) to the original long URL  |
 | `DELETE` | `/v1/links/{short_code}`| Delete a short URL (also evicts cache)   |
 
-### POST /v1/links
+#### POST /v1/links
 
 **Request body:**
 ```json
-{ "long_url": "https://example.com/some/very/long/path" }
+{
+  "long_url": "https://example.com/some/very/long/path",
+  "title": "My Link"
+}
+```
+`title` is optional.
+
+**Response `201`:**
+```json
+{
+  "short_code": "X9D7FF",
+  "long_url": "https://example.com/some/very/long/path",
+  "title": "My Link"
+}
+```
+
+#### DELETE /v1/links/{short_code}
+
+Returns `204 No Content` on success, `404` if the short code does not exist.
+
+---
+
+### Webhook Endpoints
+
+All webhook routes are prefixed with `/v1/webhooks`.
+
+| Method   | Path                          | Description                                    |
+|----------|-------------------------------|------------------------------------------------|
+| `POST`   | `/v1/webhooks`                | Register a new webhook endpoint                |
+| `GET`    | `/v1/webhooks`                | List all registered webhooks                   |
+| `DELETE` | `/v1/webhooks/{webhook_id}`   | Remove a webhook registration                  |
+| `POST`   | `/v1/webhooks/{webhook_id}/test` | Send a synthetic test payload to the endpoint |
+
+#### POST /v1/webhooks
+
+**Request body:**
+```json
+{
+  "name": "My Listener",
+  "url": "https://webhook.site/your-unique-id",
+  "events": ["url.created", "url.clicked", "url.deleted"]
+}
 ```
 
 **Response `201`:**
 ```json
 {
   "id": 1,
-  "short_code": "X9D7FF",
-  "long_url": "https://example.com/some/very/long/path"
+  "name": "My Listener",
+  "url": "https://webhook.site/your-unique-id",
+  "events": ["url.created", "url.clicked", "url.deleted"],
+  "is_active": true,
+  "created_at": "2026-04-25T10:00:00+00:00"
 }
 ```
 
-### DELETE /v1/links/{short_code}
+**Supported events:**
 
-Returns `204 No Content` on success, `404` if the short code does not exist.
+| Event          | When it fires                              |
+|----------------|--------------------------------------------|
+| `url.created`  | A new short URL is successfully created    |
+| `url.clicked`  | A redirect request resolves a short code   |
+| `url.deleted`  | A short URL is deleted                     |
 
-Interactive docs are available at [http://localhost:8000/docs](http://localhost:8000/docs) when the server is running.
+#### Webhook payload format
+
+Every event delivers a JSON body in this shape:
+
+```json
+{
+  "event": "url.created",
+  "timestamp": "2026-04-25T10:00:00+00:00",
+  "data": { ... }
+}
+```
+
+> **Tip:** Use [https://webhook.site](https://webhook.site) to get a free listener URL for testing — paste it as the `url` when registering a webhook, then use the `/test` endpoint to verify connectivity before waiting for real events.
 
 ---
 
@@ -127,6 +193,34 @@ Incoming redirect request
 - Cache keys are namespaced: `url_shortcode:{short_code}`
 - TTL defaults to **1 hour** on write-through; **5 minutes** on direct `set_cache` calls
 - Deleting a URL also evicts its cache entry
+
+---
+
+## How Webhooks Work
+
+```
+URL event (create / click / delete)
+        │
+        ▼
+  fire_event() called from route handler
+        │
+        ▼
+  Load active webhooks subscribed to this event
+        │
+        ▼
+  asyncio.create_task(_deliver(...))  ← non-blocking, fire-and-forget
+        │
+        ▼
+  API response returns immediately
+        │           │
+        │           ▼ (background)
+        │     POST JSON payload to each target URL
+        │     Errors are logged, never propagated
+```
+
+- Delivery is **fire-and-forget** — the API response is never delayed by webhook calls
+- Delivery errors are logged but do not affect the API caller
+- Each POST includes `Content-Type: application/json` and `X-Webhook-Event` headers
 
 ---
 
@@ -174,5 +268,7 @@ alembic upgrade head
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 ```
+
+Interactive docs are available at [http://localhost:8000/docs](http://localhost:8000/docs) when the server is running.
 
 Set `echo=True` on the engine in `database.py` only for debugging — it logs every SQL query.
