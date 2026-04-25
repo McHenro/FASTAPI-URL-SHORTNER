@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from app.core.database import Base, engine
 from app.api.routes import v1_router
+from app.api.webhook_routes import webhook_router
 from app.core.cache_utilities import init_redis, close_redis
 
 
@@ -24,3 +25,4 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="URL Shortener", lifespan=lifespan)
 
 app.include_router(v1_router)
+app.include_router(webhook_router)
