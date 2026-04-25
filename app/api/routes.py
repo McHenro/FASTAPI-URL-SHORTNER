@@ -21,6 +21,7 @@ from app.services.url_service import (
     get_long_url_service,
     delete_url_service,
 )
+from app.services import webhook_service
 from app.core.cache_utilities import get_cache, url_cache_key
 from fastapi.responses import RedirectResponse
 
@@ -39,6 +40,11 @@ async def create_short_url(p: URLCreate, db: AsyncSession = Depends(get_db)) -> 
         URLResponse: The persisted URL record containing short_code and long_url.
     """
     url = await create_short_url_service(db, p.long_url, p.title)
+    await webhook_service.fire_event(
+        db,
+        "url.created",
+        {"short_code": url.short_code, "long_url": url.long_url, "title": url.title},
+    )
     return url
 
 
@@ -75,6 +81,11 @@ async def redirect_to_long_url(short_code: str, db: AsyncSession = Depends(get_d
     # Fast path: Redis hit skips the DB entirely
     cached_url = await get_cache(url_cache_key(short_code))
     if cached_url:
+        await webhook_service.fire_event(
+            db,
+            "url.clicked",
+            {"short_code": short_code, "long_url": cached_url},
+        )
         return RedirectResponse(url=cached_url)
 
     # Cache miss: query DB (service also writes result back to Redis)
@@ -82,6 +93,11 @@ async def redirect_to_long_url(short_code: str, db: AsyncSession = Depends(get_d
     if not url:
         raise HTTPException(status_code=404, detail="URL not found")
 
+    await webhook_service.fire_event(
+        db,
+        "url.clicked",
+        {"short_code": url.short_code, "long_url": url.long_url, "title": url.title},
+    )
     return RedirectResponse(url=url.long_url)
 
 
@@ -101,3 +117,4 @@ async def delete_short_url(short_code: str, db: AsyncSession = Depends(get_db)):
     deleted = await delete_url_service(db, short_code)
     if not deleted:
         raise HTTPException(status_code=404, detail="URL not found")
+    await webhook_service.fire_event(db, "url.deleted", {"short_code": short_code})
