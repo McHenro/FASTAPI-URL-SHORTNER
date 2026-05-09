@@ -10,8 +10,8 @@ Endpoints:
 - DELETE /v1/links/{short_code}  delete a short link
 """
 
-from typing import List
-from fastapi import APIRouter, Depends, HTTPException
+from typing import List, Optional
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.schemas.url_schema import URLCreate, URLResponse
@@ -23,28 +23,49 @@ from app.services.url_service import (
 )
 from app.services import webhook_service
 from app.core.cache_utilities import get_cache, url_cache_key
+from app.core.idempotency import get_idempotent_response, store_idempotent_response
 from fastapi.responses import RedirectResponse
 
 v1_router = APIRouter(prefix="/v1", tags=["v1"])
 
 
 @v1_router.post("/links", response_model=URLResponse)
-async def create_short_url(p: URLCreate, db: AsyncSession = Depends(get_db)) -> URLResponse:
+async def create_short_url(
+    p: URLCreate,
+    db: AsyncSession = Depends(get_db),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+) -> URLResponse:
     """Create a short URL code for a provided long URL.
+
+    Supports the Idempotency-Key header. Send the same UUID on retries and
+    the original response is returned without creating a duplicate record.
 
     Args:
         p: Pydantic model containing the long_url to shorten.
         db: Async SQLAlchemy DB session dependency.
+        idempotency_key: Optional client-generated UUID for safe retries.
 
     Returns:
         URLResponse: The persisted URL record containing short_code and long_url.
     """
+    if idempotency_key:
+        cached = await get_idempotent_response(idempotency_key)
+        if cached:
+            return URLResponse(**cached)
+
     url = await create_short_url_service(db, p.long_url, p.title)
     await webhook_service.fire_event(
         db,
         "url.created",
         {"short_code": url.short_code, "long_url": url.long_url, "title": url.title},
     )
+
+    if idempotency_key:
+        await store_idempotent_response(
+            idempotency_key,
+            {"short_code": url.short_code, "long_url": url.long_url, "title": url.title},
+        )
+
     return url
 
 

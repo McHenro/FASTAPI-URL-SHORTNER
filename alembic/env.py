@@ -24,6 +24,7 @@ if config.config_file_name is not None:
 # Without these imports, Alembic cannot see the tables during autogenerate.
 from app.core.database import Base
 from app.models import url  # noqa
+from app.models import dead_letter_webhook  # noqa
 
 # "What your Python models say the DB should look like" — Alembic diffs this against the live DB
 target_metadata = Base.metadata

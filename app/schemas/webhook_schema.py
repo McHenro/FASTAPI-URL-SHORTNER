@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 
 
@@ -23,5 +23,19 @@ class WebhookResponse(BaseModel):
     events: List[str]
     is_active: bool
     created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class DLQEntryResponse(BaseModel):
+    id: int
+    webhook_id: int
+    webhook_url: str
+    payload: dict
+    failure_reason: Optional[str] = None
+    attempt_count: int
+    failed_at: datetime
+    is_resolved: bool
+    replayed_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
